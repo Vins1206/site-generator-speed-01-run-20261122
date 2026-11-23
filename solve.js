@@ -66,10 +66,11 @@ export function slugify(text) {
   if (hit !== undefined) return hit;
   let plain = text;
   // ASCII is fixed by NFKD and holds no combining marks, so skip both steps.
-  if (/[^\x00-\x7f]/.test(text)) plain = text.normalize('NFKD').replace(/\p{M}/gu, '');
+  const ascii = !/[^\x00-\x7f]/.test(text);
+  if (!ascii) plain = text.normalize('NFKD').replace(/\p{M}/gu, '');
   let out = '';
   let gap = false;
-  if (plain === text && !/[^\x00-\x7f]/.test(text)) {
+  if (plain === text && ascii) {
     for (let i = 0; i < plain.length; i++) {
       const c = plain.charCodeAt(i);
       let keep = -1;
@@ -371,24 +372,36 @@ function findSingleStar(s, from, hi) {
 }
 const WS_RE = /\s/;
 function inlineRange(s, lo, hi, out, linkFn) {
-  // Jump between the four characters that can open an inline construct
-  // with native indexOf scans (C++), instead of walking every character
-  // in JS. A failed construct is plain text: skip just its opener and
-  // keep searching, exactly as the reference's per-character walk does.
+  // Jump between the four characters that can open an inline construct.
+  // The next position of each is cached and only re-scanned when the scan
+  // cursor passes it, instead of re-scanning all four from the cursor on
+  // every construct: most constructs contain no other special character,
+  // so usually only the consumed type needs a fresh scan. A failed
+  // construct is plain text: skip just its opener and keep searching,
+  // exactly as the reference's per-character walk does. Stale positions
+  // are refreshed at the top of the loop, after the cursor moves.
   let i = lo;
   let plain = lo;
+  let nb = s.indexOf('\\', i);
+  if (nb === -1 || nb >= hi) nb = -1;
+  let nt = s.indexOf('`', i);
+  if (nt === -1 || nt >= hi) nt = -1;
+  let ns = s.indexOf('*', i);
+  if (ns === -1 || ns >= hi) ns = -1;
+  let nbr = s.indexOf('[', i);
+  if (nbr === -1 || nbr >= hi) nbr = -1;
   while (i < hi) {
+    if (nb !== -1 && nb < i) { nb = s.indexOf('\\', i); if (nb === -1 || nb >= hi) nb = -1; }
+    if (nt !== -1 && nt < i) { nt = s.indexOf('`', i); if (nt === -1 || nt >= hi) nt = -1; }
+    if (ns !== -1 && ns < i) { ns = s.indexOf('*', i); if (ns === -1 || ns >= hi) ns = -1; }
+    if (nbr !== -1 && nbr < i) { nbr = s.indexOf('[', i); if (nbr === -1 || nbr >= hi) nbr = -1; }
     let next = hi;
     let which = 0;
-    let j = s.indexOf('\\', i);
-    if (j !== -1 && j < next) { next = j; which = 1; }
-    j = s.indexOf('`', i);
-    if (j !== -1 && j < next) { next = j; which = 2; }
-    j = s.indexOf('*', i);
-    if (j !== -1 && j < next) { next = j; which = 3; }
-    j = s.indexOf('[', i);
-    if (j !== -1 && j < next) { next = j; which = 4; }
-    if (next >= hi) break;
+    if (nb !== -1 && nb < next) { next = nb; which = 1; }
+    if (nt !== -1 && nt < next) { next = nt; which = 2; }
+    if (ns !== -1 && ns < next) { next = ns; which = 3; }
+    if (nbr !== -1 && nbr < next) { next = nbr; which = 4; }
+    if (which === 0) break;
     i = next;
     if (which === 1) {
       if (i + 1 < hi && isEscapable(s.charCodeAt(i + 1))) {
@@ -885,8 +898,12 @@ export function run(input) {
   const sources = [];
   const statics = [];
   for (const f of sortedFiles) {
-    if (f.path.endsWith('.md')) sources.push({ path: f.path, text: f.content.replace(/\r\n?/g, '\n') });
-    else statics.push(f);
+    if (f.path.endsWith('.md')) {
+      // Most sources hold no '\r': skip the regex replace (and the copy
+      // it builds) unless one is present.
+      const raw = f.content;
+      sources.push({ path: f.path, text: raw.includes('\r') ? raw.replace(/\r\n?/g, '\n') : raw });
+    } else statics.push(f);
   }
 
   // 2. Front matter, in order: refused, generator's own dir, post needs date,
@@ -925,11 +942,22 @@ export function run(input) {
   // 4. Markdown, links resolved.
   const staticPaths = new Set(statics.map((f) => f.path));
   const broken = new Set();
+  // The same relative targets recur across sources (a handful of
+  // neighbours and statics): resolve each (directory, target) once. A
+  // broken target still records its own source's broken-link line, so
+  // the cache only skips the resolution, never the report entry.
+  const linkCache = new Map();
   for (const s of kept) {
     const dir = dirOf(s.path);
     const dirParts = dir === '' ? [] : dir.split('/');
     const linkFn = (target) => {
       if (SCHEME_RE.test(target) || target[0] === '/' || target[0] === '#') return target;
+      const key = dir + '\0' + target;
+      const hit = linkCache.get(key);
+      if (hit !== undefined) {
+        if (hit === false) broken.add(`broken-link ${s.path} -> ${target}`);
+        return hit === false ? target : hit;
+      }
       const hash = target.indexOf('#');
       const rel = hash === -1 ? target : target.slice(0, hash);
       const frag = hash === -1 ? '' : target.slice(hash);
@@ -940,10 +968,16 @@ export function run(input) {
         // No '.' or '..' segment and no empty segment: plain join.
         path = dir === '' ? rel : `${dir}/${rel}`;
       } else path = resolvePathParts(dirParts, rel);
-      if (path !== null && bySource.has(path)) return bySource.get(path).url + frag;
-      if (path !== null && staticPaths.has(path)) return `${base}/${path}${frag}`;
-      broken.add(`broken-link ${s.path} -> ${target}`);
-      return target;
+      let resolved;
+      if (path !== null && bySource.has(path)) resolved = bySource.get(path).url + frag;
+      else if (path !== null && staticPaths.has(path)) resolved = `${base}/${path}${frag}`;
+      else {
+        broken.add(`broken-link ${s.path} -> ${target}`);
+        linkCache.set(key, false);
+        return target;
+      }
+      linkCache.set(key, resolved);
+      return resolved;
     };
     const md = renderMarkdown(s.body, linkFn);
     s.html = md.html;
@@ -962,11 +996,11 @@ export function run(input) {
   // 6. Tags, grouped by slug, named as first met in collection order.
   const bySlug = new Map();
   const ownTags = (s) => {
-    const seen = new Set();
+    const seen = [];
     const out = [];
     for (const name of (s.data.tags ?? [])) {
       const slug = slugify(name);
-      if (!seen.has(slug)) { seen.add(slug); out.push(name); }
+      if (!seen.includes(slug)) { seen.push(slug); out.push(name); }
     }
     return out;
   };

@@ -4,6 +4,11 @@
 // /output/answers.json: a JSON array of the answers, one per case and in the
 // cases' order. Outside a container MAKEFUN_INPUT_DIR and MAKEFUN_OUTPUT_DIR
 // stand in for /input and /output.
+//
+// Recovery cycle 1 (2026-11-23): solve.js was re-tuned for CPU time (cached
+// inline-construct scan, per-case link cache, CR fast path). The driver is
+// unchanged by design: one JSON.parse of the cases, one run() per case, one
+// JSON.stringify of the answers, so the timed run measures the build.
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';

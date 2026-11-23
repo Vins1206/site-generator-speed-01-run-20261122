@@ -33,6 +33,10 @@ from `/input/cases.json`, answers each one alone with `run`, and writes
 - Slugs are cached per case, with an ASCII fast path around NFKD; HTML
   escaping uses a single regex scan; word counting uses a fast branch
   for ASCII text.
+- Inline constructs are found by caching each opener's next position
+  and re-scanning only the type the cursor passes; repeated relative
+  links are resolved once per (directory, target); sources without a
+  carriage return skip the CR normalisation pass.
 - Nothing is cached from one case to the next: every per-case cache is
   created fresh inside `run()`.
 
@@ -41,7 +45,8 @@ from `/input/cases.json`, answers each one alone with `run`, and writes
 - Exactness: **3/3 cases pass** the kit scorer (`passed: 1`), and the
   same on 9/9 freshly generated cases drawn from other seeds.
 - CPU time (practice set, 3 cases, median of 10 runs in one process):
-  **~209 ms vs ~649 ms for the house baseline — about 3.1× faster**.
+  **~192 ms vs ~614 ms for the house baseline — about 3.2× faster**.
+  (First version: ~209 ms vs ~649 ms, 3.1×; recovery cycle 1, 2026-11-23.)
 - Two runs of `main.ts` produce byte-identical `answers.json`.
 
 ## How to run
