@@ -37,6 +37,10 @@ from `/input/cases.json`, answers each one alone with `run`, and writes
   and re-scanning only the type the cursor passes; repeated relative
   links are resolved once per (directory, target); sources without a
   carriage return skip the CR normalisation pass.
+- The driver runs V8 with `--no-opt` (TurboFan off): the harness times a
+  fresh process over 3 cases, so the run is cold and the optimiser's
+  compiles cost more CPU than the optimised code saves in so short a
+  run. The house rules explicitly allow an entry to tune V8's flags.
 - Nothing is cached from one case to the next: every per-case cache is
   created fresh inside `run()`.
 
@@ -45,8 +49,11 @@ from `/input/cases.json`, answers each one alone with `run`, and writes
 - Exactness: **3/3 cases pass** the kit scorer (`passed: 1`), and the
   same on 9/9 freshly generated cases drawn from other seeds.
 - CPU time (practice set, 3 cases, median of 10 runs in one process):
-  **~192 ms vs ~614 ms for the house baseline — about 3.2× faster**.
+  **~183 ms vs ~660 ms for the house baseline — about 3.6× faster**.
   (First version: ~209 ms vs ~649 ms, 3.1×; recovery cycle 1, 2026-11-23.)
+- Whole-process CPU of a cold `main.ts` run (the closest local proxy for
+  the grader's fresh-process timing): **~512 ms with `--no-opt` vs
+  ~745 ms with default flags (-31%)**. (Recovery cycle 2, 2026-11-24.)
 - Two runs of `main.ts` produce byte-identical `answers.json`.
 
 ## How to run

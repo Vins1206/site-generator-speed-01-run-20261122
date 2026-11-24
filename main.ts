@@ -19,7 +19,15 @@ import { setFlagsFromString } from 'node:v8';
 // --no-incremental-marking, and an entry may tune V8's flags too).
 // The fast solve.js behind this driver is a clean-room reimplementation of
 // makefun-site 1.0.0's exact semantics (see solve.js header).
-setFlagsFromString('--no-incremental-marking');
+//
+// Recovery cycle 2 (2026-11-24): --no-opt added. The harness runs the entry
+// in a fresh process over 3 cases, so the timed run is cold: TurboFan's
+// optimisation compiles cost more CPU than the optimised code saves in so
+// short a run. Measured locally (whole-process CPU, practice set, 3 runs
+// each, interleaved): default 745 ms vs --no-opt 512 ms (-31%); warm run()
+// median 195 ms vs 183 ms (-6%). The flag is set here, before solve.js is
+// imported, so every part of the entry runs under it.
+setFlagsFromString('--no-incremental-marking --no-opt');
 
 /** solve.js, imported by its URL (a .js module carries no types) and typed by its contract. */
 const { run } = (await import(new URL('./solve.js', import.meta.url).href)) as { run: (input: unknown) => unknown };
